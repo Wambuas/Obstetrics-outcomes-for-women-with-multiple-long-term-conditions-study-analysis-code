@@ -1,0 +1,3197 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+
+rm(list = ls())
+
+
+library(meta)
+library(metasens)
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(plyr)
+library(foreign)
+library(readxl)
+library(writexl)
+library(dplyr)
+
+settings.meta(digits=2)
+
+```
+
+
+### Data
+
+#### Figure 2
+
+
+```{r}
+
+df <- read_excel("Primary analysis.xlsx", skip = 1)[,-c(11:13)]
+
+```
+
+
+```{r}
+# --- Define which outcomes belong to which category ------------
+
+maternal_health <- c(
+  "Postpartum haemorrhage",
+  "Maternal infection",
+  "Hysterectomy",
+  "Severe maternal morbidity (overall)",
+  "Maternal death",
+  "Late maternal death"
+)
+
+obstetric_delivery <- c(
+  "Preterm birth",
+  "Prelabour rupture of membranes (PROM)",
+  "Birth without intervention",
+  "Epidural anaesthesia (pre-delivery)",
+  "Spontaneous vaginal birth",
+  "Induction of labour (any)",
+  "Augmentation of labour",
+  "Instrumental birth",
+  "Perineal tear",
+  "Shoulder dystocia",
+  "Caesarean section",
+  "Emergency caesarean section",
+  "Elective caesarean section"
+)
+
+child <- c(
+  "APGAR",
+  "Stillbirth",
+  "Small for gestational age",
+  "Large for gestational age",
+  "Neonatal death",
+  "Infant death"
+)
+
+mental_health <- c(
+  "Postpartum depression",
+  "Postpartum anxiety"
+)
+
+service_use <- c(
+  "Hospital admission within 3 months postpartum",
+  "ICU admission within 3 months postpartum",
+  "Length of stay 3-6 days",
+  "Length of stay >=7 days",
+  "Length of stay (continuous)",
+  "Postnatal stay 3-6 days",
+  "Postnatal stay >=7 days",
+  "Actual place of birth (home vs hospital)",
+  "Intended place of birth (home vs hospital)"
+)
+
+# --- Harmonise variant names to the target labels --------------
+
+df <- df %>%
+  mutate(Outcome = recode(Outcome,
+    "Length of stay (3-6 days)"           = "Length of stay 3-6 days",
+    "Length of stay (>=7 days)"           = "Length of stay >=7 days",
+    "Length of stay 3to7days v 0to2days"  = "Length of stay 3-6 days",
+    "Length of stay 7plusdays v 0to2days" = "Length of stay >=7 days",
+    "Postnatal stay (3-6 days)"           = "Postnatal stay 3-6 days",
+    "Postnatal stay (>=7 days)"           = "Postnatal stay >=7 days",
+
+    "Caeserian section"             = "Caesarean section",
+    "Caesarean section (elective)"  = "Elective caesarean section",
+    "Caesarean section (emergency)" = "Emergency caesarean section",
+    "Early maternal deaths"         = "Maternal death",
+    "Late maternal deaths"          = "Late maternal death",
+    "Epidural"                      = "Epidural anaesthesia (pre-delivery)",
+    "Induction of labour"           = "Induction of labour (any)",
+    "Premature rupture of membrane" = "Prelabour rupture of membranes (PROM)",
+    "Severe maternal morbidity"     = "Severe maternal morbidity (overall)",
+
+    "Hospital admission" = "Hospital admission within 3 months postpartum",
+
+    "LGA" = "Large for gestational age",
+    "SGA" = "Small for gestational age",
+
+    "Postnatal depression" = "Postpartum depression",
+    "Postnatal anxiety"    = "Postpartum anxiety"
+  ))
+
+# --- Assign category -------------------------------------------
+
+df <- df %>%
+  mutate(Category = case_when(
+    Outcome %in% maternal_health    ~ "Maternal Health Outcomes",
+    Outcome %in% obstetric_delivery ~ "Obstetric / Delivery Outcomes",
+    Outcome %in% child              ~ "Infant/Child Outcomes",
+    Outcome %in% mental_health      ~ "Maternal mental Health",
+    Outcome %in% service_use        ~ "Service Utilisation Outcomes",
+    TRUE                            ~ NA_character_
+  )) %>%
+  relocate(Category, .before = Outcome)
+
+# --- Report any outcomes that didn't match ---------------------
+
+unmatched <- df %>%
+  filter(is.na(Category), !is.na(Outcome)) %>%
+  pull(Outcome) %>%
+  unique()
+
+if (length(unmatched) > 0) {
+  message("Outcomes not matched to a category:")
+  print(unmatched)
+} else {
+  message("All outcomes assigned to a category.")
+}
+
+
+
+```
+
+
+
+```{r}
+# --- Create Outcome2 as an ordered factor ----------------------
+# Levels follow the order in the original labels list:
+# Obstetric / Maternal -> Child -> Mental Health -> Service Use
+outcome_levels <- c(maternal_health,obstetric_delivery, child, mental_health, service_use)
+
+df <- df %>%
+  mutate(Outcome = factor(Outcome, levels = outcome_levels)) 
+
+
+```
+
+
+```{r}
+
+names(df) = c("Category","Outcome","EventsInUnexposed","Unexposed","EventsInExposed","Exposed","RR","LL","UL","Model","Dataset")
+
+```
+
+```{r}
+df = subset(df,!is.na(df$RR))
+
+# df$RR = round(as.numeric(df$RR),2)
+# df$LL = round(as.numeric(df$LL),2)
+# df$UL = round(as.numeric(df$UL),2)
+
+
+round_excel <- function(x, digits = 0) {
+  scale <- 10^digits
+  floor(x * scale + 0.5) / scale
+}
+
+
+x = df
+x$LL0 = round(x$LL,2)
+x$LL1=round_excel(x$LL, 2)
+
+k = x %>% dplyr::select(Outcome,LL,LL0,LL1,Dataset)
+k$check = ifelse(k$LL0==k$LL1,1,0)
+
+x = df
+x$RR0 = round(x$RR,2)
+x$RR1=round_excel(x$RR, 2)
+
+k = x %>% dplyr::select(Outcome,RR,RR0,RR1,Dataset)
+k$check = ifelse(k$RR0==k$RR1,1,0)
+
+
+x = df
+x$UL0 = round(x$UL,2)
+x$UL1=round_excel(x$UL, 2)
+
+k = x %>% dplyr::select(Outcome,UL,UL0,UL1,Dataset)
+k$check = ifelse(k$UL0==k$UL1,1,0)
+
+
+df$RR = round_excel(df$RR,3)
+df$LL = round_excel(df$LL,3)
+df$UL = round_excel(df$UL,3)
+
+
+```
+
+
+```{r}
+# Convert HR to log(HR) and compute standard error
+df$logRR <- log(df$RR)
+df$SE <- (log(df$UL) - log(df$LL)) / (2 * 1.96)
+
+df = subset(df,!is.na(df$SE))
+
+df = data.frame(df)
+
+```
+
+
+```{r}
+
+# # Perform meta-analysis with Dataset as subgroups
+# meta_result <- metagen(TE = logRR, 
+#                        seTE = SE, 
+#                        studlab = Dataset, 
+#                        data = df, 
+#                        sm = "RR", 
+#                        method.tau = "REML",
+#                        byvar = Outcome,
+#                        comb.fixed = F,  
+#                        comb.random = T,
+#                        overall = FALSE,
+#                        print.subgroup = TRUE)  
+# 
+# # Generate forest plot by Dataset
+# 
+# jpeg("Figure 2.jpg", width = 1800, height = 2900, res = 150)
+# 
+# forest(meta_result, 
+#        leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+#        leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+#        rightcols = c("effect", "ci", "w.random"),
+#        rightlabs = c("RR", "95% CI", "Weight"),
+#        print.byvar = TRUE,  
+#        colgap.forest = "4mm",
+#        overall.hetstat = FALSE,
+#        test.subgroup = FALSE)
+# 
+# dev.off()
+
+```
+
+
+```{r}
+# jpeg("Figure 2 Final 050925.jpeg", width = 1800, height = 3050, res = 150)
+# 
+# forest(meta_result, 
+#        leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+#        leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+#        rightcols = c("effect", "ci", "w.random"),
+#        rightlabs = c("RR", "95% CI", "Weight"),
+#        print.byvar = TRUE,  
+#        colgap.forest = "4mm",
+#        overall.hetstat = FALSE,
+#        test.subgroup = FALSE)  
+# 
+# dev.off()
+
+```
+
+##### Split into FOUR
+
+###### Obstetric / Delivery Outcomes 
+
+```{r}
+
+df1 = filter(df,Category %in% c("Obstetric / Delivery Outcomes"))
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 2 Obstetric or Delivery Outcomes.jpg", width = 1800, height = 3150, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+
+
+
+###### Maternal Health Outcomes
+
+```{r}
+
+df1 = filter(df,Category %in% c("Maternal Health Outcomes"))
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 2 Maternal Health Outcomes.jpg", width = 1800, height = 1400, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+###### Service Utilisation Outcomes 
+
+```{r}
+
+df1 = filter(df,Category %in% c("Service Utilisation Outcomes"))
+
+df1 = filter(df1,!Outcome %in% c("Length of stay (continuous)"))
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 2 Service Utilisation Outcomes.jpg", width = 1800, height = 1200, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+
+###### Infant/Child Outcomes 
+
+```{r}
+
+df1 = filter(df,Category %in% c("Infant/Child Outcomes"))
+
+df1 <- df1 %>%
+  dplyr::filter(!(Dataset == "CPRD" & Outcome == "Neonatal death"))
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 2 Infant_Child Outcomes.jpg", width = 1800, height = 1500, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+
+
+###### Maternal mental Health 
+
+```{r}
+
+df1 = filter(df,Category %in% c("Maternal mental Health"))
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "DL",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 2 Maternal mental Health.jpg", width = 1800, height = 550, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+#### Figure 4
+
+```{r}
+
+df <- read_excel("Figure 4 data.xlsx", skip = 1)[,-c(11:13)]
+
+```
+
+
+```{r}
+
+# --- Define which outcomes belong to which category ------------
+
+maternal_health <- c(
+  "Postpartum haemorrhage",
+  "Maternal infection",
+  "Hysterectomy",
+  "Severe maternal morbidity (overall)",
+  "Maternal death",
+  "Late maternal death"
+)
+
+obstetric_delivery <- c(
+  "Preterm birth",
+  "Prelabour rupture of membranes (PROM)",
+  "Birth without intervention",
+  "Epidural anaesthesia (pre-delivery)",
+  "Spontaneous vaginal birth",
+  "Induction of labour (any)",
+  "Augmentation of labour",
+  "Instrumental birth",
+  "Perineal tear",
+  "Shoulder dystocia",
+  "Caesarean section",
+  "Emergency caesarean section",
+  "Elective caesarean section"
+)
+
+child <- c(
+  "APGAR",
+  "Stillbirth",
+  "Small for gestational age",
+  "Large for gestational age",
+  "Neonatal death",
+  "Infant death"
+)
+
+mental_health <- c(
+  "Postpartum depression",
+  "Postpartum anxiety"
+)
+
+service_use <- c(
+  "Hospital admission within 3 months postpartum",
+  "ICU admission within 3 months postpartum",
+  "Length of stay 3-6 days",
+  "Length of stay >=7 days",
+  "Length of stay (continuous)",
+  "Postnatal stay 3-6 days",
+  "Postnatal stay >=7 days",
+  "Actual place of birth (home vs hospital)",
+  "Intended place of birth (home vs hospital)"
+)
+
+# --- Harmonise variant names to the target labels --------------
+
+df <- df %>%
+  mutate(
+    Outcome = recode(
+      Outcome,
+      "Length of stay (3-6 days)"           = "Length of stay 3-6 days",
+      "Length of stay 3 to 6 days"          = "Length of stay 3-6 days",
+      "Length of stay (>=7 days)"           = "Length of stay >=7 days",
+      "Length of stay >= 7 days"            = "Length of stay >=7 days",
+      "Length of stay 3to7days v 0to2days"  = "Length of stay 3-6 days",
+      "Length of stay 7plusdays v 0to2days" = "Length of stay >=7 days",
+
+      "Postnatal stay (3-6 days)"           = "Postnatal stay 3-6 days",
+      "Postnatal stay 3 to 6 days"          = "Postnatal stay 3-6 days",
+      "Postnatal stay (>=7 days)"           = "Postnatal stay >=7 days",
+      "Postnatal stay >= 7 days"            = "Postnatal stay >=7 days",
+
+      "Caeserian section"                   = "Caesarean section",
+      "Caeserean section"                   = "Caesarean section",
+      "C-Section (All)"                     = "Caesarean section",
+      "Caesarean section (elective)"        = "Elective caesarean section",
+      "C-Section (Elective)"                = "Elective caesarean section",
+      "Caesarean section (emergency)"       = "Emergency caesarean section",
+      "C-Section (Emergency)"               = "Emergency caesarean section",
+
+      "Early maternal deaths"               = "Maternal death",
+      "Late maternal deaths"                = "Late maternal death",
+      "Epidural"                            = "Epidural anaesthesia (pre-delivery)",
+      "Induction of labour"                 = "Induction of labour (any)",
+      "Induction of Labour"                 = "Induction of labour (any)",
+      "Premature rupture of membrane"       = "Prelabour rupture of membranes (PROM)",
+      "Severe maternal morbidity"           = "Severe maternal morbidity (overall)",
+      "Severe Maternal Morbidity"           = "Severe maternal morbidity (overall)",
+
+      "Hospital admission"                  = "Hospital admission within 3 months postpartum",
+
+      "LGA"                                 = "Large for gestational age",
+      "SGA"                                 = "Small for gestational age",
+      "Infant Death"                        = "Infant death",
+      "Neonatal Death"                      = "Neonatal death",
+      "Preterm Birth"                       = "Preterm birth",
+
+      "Instrumental Birth"                  = "Instrumental birth",
+      "Spontaneous Vaginal Birth"           = "Spontaneous vaginal birth",
+
+      "Postnatal depression"                = "Postpartum depression",
+      "postnatal depression"                = "Postpartum depression",
+      "Postnatal anxiety"                   = "Postpartum anxiety",
+      "postnatal anxiety"                   = "Postpartum anxiety"
+    )
+  )
+
+# --- Assign category -------------------------------------------
+
+df <- df %>%
+  mutate(
+    Category = case_when(
+      Outcome %in% maternal_health    ~ "Maternal Health Outcomes",
+      Outcome %in% obstetric_delivery ~ "Obstetric / Delivery Outcomes",
+      Outcome %in% child              ~ "Infant/Child Outcomes",
+      Outcome %in% mental_health      ~ "Maternal mental Health",
+      Outcome %in% service_use        ~ "Service Utilisation Outcomes",
+      TRUE                            ~ NA_character_
+    )
+  ) %>%
+  relocate(Category, .before = Outcome)
+
+# --- Report any outcomes that did not match ---------------------
+
+unmatched <- df %>%
+  filter(is.na(Category), !is.na(Outcome)) %>%
+  pull(Outcome) %>%
+  unique()
+
+if (length(unmatched) > 0) {
+  message("Outcomes not matched to a category:")
+  print(unmatched)
+} else {
+  message("All outcomes assigned to a category.")
+}
+
+```
+
+
+
+```{r}
+# --- Create Outcome2 as an ordered factor ----------------------
+# Levels follow the order in the original labels list:
+# Obstetric / Maternal -> Child -> Mental Health -> Service Use
+outcome_levels <- c(maternal_health,obstetric_delivery, child, mental_health, service_use)
+
+df <- df %>%
+  mutate(Outcome = factor(Outcome, levels = outcome_levels)) 
+
+
+
+```
+
+
+```{r}
+
+names(df) = c("Category","Outcome","EventsInUnexposed","Unexposed","EventsInExposed","Exposed","RR","LL","UL","Model","Dataset")
+
+```
+
+```{r}
+df = subset(df,!is.na(df$RR))
+
+# df$RR = round(as.numeric(df$RR),2)
+# df$LL = round(as.numeric(df$LL),2)
+# df$UL = round(as.numeric(df$UL),2)
+
+
+round_excel <- function(x, digits = 0) {
+  scale <- 10^digits
+  floor(x * scale + 0.5) / scale
+}
+
+
+x = df
+x$LL0 = round(x$LL,2)
+x$LL1=round_excel(x$LL, 2)
+
+k = x %>% dplyr::select(Outcome,LL,LL0,LL1,Dataset)
+k$check = ifelse(k$LL0==k$LL1,1,0)
+
+x = df
+x$RR0 = round(x$RR,2)
+x$RR1=round_excel(x$RR, 2)
+
+k = x %>% dplyr::select(Outcome,RR,RR0,RR1,Dataset)
+k$check = ifelse(k$RR0==k$RR1,1,0)
+
+
+x = df
+x$UL0 = round(x$UL,2)
+x$UL1=round_excel(x$UL, 2)
+
+k = x %>% dplyr::select(Outcome,UL,UL0,UL1,Dataset)
+k$check = ifelse(k$UL0==k$UL1,1,0)
+
+
+df$RR = round_excel(df$RR,3)
+df$LL = round_excel(df$LL,3)
+df$UL = round_excel(df$UL,3)
+
+
+```
+
+
+```{r}
+# Convert HR to log(HR) and compute standard error
+df$logRR <- log(df$RR)
+df$SE <- (log(df$UL) - log(df$LL)) / (2 * 1.96)
+
+df = subset(df,!is.na(df$SE))
+
+df = data.frame(df)
+
+```
+
+##### Split into FOUR
+
+###### Obstetric / Delivery Outcomes 
+
+```{r}
+
+df1 = filter(df,Category %in% c("Obstetric / Delivery Outcomes"))
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 4 Obstetric or Delivery Outcomes.jpg", width = 1800, height = 3150, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+
+
+
+###### Maternal Health Outcomes
+
+```{r}
+
+df1 = filter(df,Category %in% c("Maternal Health Outcomes"))
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 4 Maternal Health Outcomes.jpg", width = 1800, height = 1400, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+###### Service Utilisation Outcomes 
+
+```{r}
+
+df1 = filter(df,Category %in% c("Service Utilisation Outcomes"))
+
+df1 = filter(df1,!Outcome %in% c("Length of stay (continuous)"))
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 4 Service Utilisation Outcomes.jpg", width = 1800, height = 1200, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+
+###### Infant/Child Outcomes 
+
+```{r}
+
+df1 = filter(df,Category %in% c("Infant/Child Outcomes"))
+
+df1 <- df1 %>%
+  dplyr::filter(!(Dataset == "CPRD" & Outcome == "Neonatal death"))
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 4 Infant_Child Outcomes.jpg", width = 1800, height = 1500, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+
+
+###### Maternal mental Health 
+
+```{r}
+
+df1 = filter(df,Category %in% c("Maternal mental Health"))
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df1, 
+                       sm = "RR", 
+                       method.tau = "DL",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("Figure 4 Maternal mental Health.jpg", width = 1800, height = 550, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE) 
+
+dev.off()
+
+```
+
+#### Figure 3
+
+```{r}
+
+maternal_health <- c(
+  "Postpartum haemorrhage",
+  "Maternal infection",
+  "Hysterectomy",
+  "Severe maternal morbidity (overall)",
+  "Maternal death",
+  "Late maternal death"
+)
+
+obstetric_delivery <- c(
+  "Preterm birth",
+  "Prelabour rupture of membranes (PROM)",
+  "Birth without intervention",
+  "Epidural anaesthesia (pre-delivery)",
+  "Spontaneous vaginal birth",
+  "Induction of labour (any)",
+  "Augmentation of labour",
+  "Instrumental birth",
+  "Perineal tear",
+  "Shoulder dystocia",
+  "Caesarean section",
+  "Emergency caesarean section",
+  "Elective caesarean section"
+)
+
+child <- c(
+  "APGAR",
+  "Stillbirth",
+  "Small for gestational age",
+  "Large for gestational age",
+  "Neonatal death",
+  "Infant death"
+)
+
+mental_health <- c(
+  "Postpartum depression",
+  "Postpartum anxiety"
+)
+
+service_use <- c(
+  "Hospital admission within 3 months postpartum",
+  "ICU admission within 3 months postpartum",
+  "Length of stay 3-6 days",
+  "Length of stay >=7 days",
+  "Length of stay (continuous)",
+  "Postnatal stay 3-6 days",
+  "Postnatal stay >=7 days",
+  "Actual place of birth (home vs hospital)",
+  "Intended place of birth (home vs hospital)"
+)
+
+outcome_levels <- c(
+  maternal_health,
+  obstetric_delivery,
+  child,
+  mental_health,
+  service_use
+)
+
+categorise_outcomes <- function(df) {
+  df %>%
+    mutate(Outcome = recode(
+      Outcome,
+      "Length of stay (3-6 days)"           = "Length of stay 3-6 days",
+      "Length of stay 3 to 6 days"          = "Length of stay 3-6 days",
+      "Length of stay (>=7 days)"           = "Length of stay >=7 days",
+      "Length of stay >= 7 days"            = "Length of stay >=7 days",
+      "Length of stay 3to7days v 0to2days"  = "Length of stay 3-6 days",
+      "Length of stay 7plusdays v 0to2days" = "Length of stay >=7 days",
+
+      "Postnatal stay (3-6 days)"           = "Postnatal stay 3-6 days",
+      "Postnatal stay 3 to 6 days"          = "Postnatal stay 3-6 days",
+      "Postnatal stay (>=7 days)"           = "Postnatal stay >=7 days",
+      "Postnatal stay >= 7 days"            = "Postnatal stay >=7 days",
+
+      "Caeserian section"                   = "Caesarean section",
+      "Caeserean section"                   = "Caesarean section",
+      "C-Section (All)"                     = "Caesarean section",
+      "Caesarean section (elective)"        = "Elective caesarean section",
+      "C-Section (Elective)"                = "Elective caesarean section",
+      "Caesarean section (emergency)"       = "Emergency caesarean section",
+      "C-Section (Emergency)"               = "Emergency caesarean section",
+
+      "Early maternal deaths"               = "Maternal death",
+      "Late maternal deaths"                = "Late maternal death",
+      "Epidural"                            = "Epidural anaesthesia (pre-delivery)",
+      "Induction of labour"                 = "Induction of labour (any)",
+      "Induction of Labour"                 = "Induction of labour (any)",
+      "Premature rupture of membrane"       = "Prelabour rupture of membranes (PROM)",
+      "Severe maternal morbidity"           = "Severe maternal morbidity (overall)",
+      "Severe Maternal Morbidity"           = "Severe maternal morbidity (overall)",
+      "Preterm Birth"                       = "Preterm birth",
+      "Spontaneous Vaginal Birth"           = "Spontaneous vaginal birth",
+      "Instrumental Birth"                  = "Instrumental birth",
+
+      "Hospital admission"                  = "Hospital admission within 3 months postpartum",
+
+      "LGA"                                 = "Large for gestational age",
+      "SGA"                                 = "Small for gestational age",
+      "Infant Death"                        = "Infant death",
+      "Neonatal Death"                      = "Neonatal death",
+
+      "Postnatal depression"                = "Postpartum depression",
+      "postnatal depression"                = "Postpartum depression",
+      "Postnatal anxiety"                   = "Postpartum anxiety",
+      "postnatal anxiety"                   = "Postpartum anxiety"
+    )) %>%
+    mutate(Category = case_when(
+      Outcome %in% maternal_health    ~ "Maternal Health Outcomes",
+      Outcome %in% obstetric_delivery ~ "Obstetric / Delivery Outcomes",
+      Outcome %in% child              ~ "Infant/Child Outcomes",
+      Outcome %in% mental_health      ~ "Maternal mental Health",
+      Outcome %in% service_use        ~ "Service Utilisation Outcomes",
+      TRUE                            ~ NA_character_
+    )) %>%
+    mutate(Outcome = factor(Outcome, levels = outcome_levels)) %>%
+    relocate(Category, .before = Outcome)
+}
+
+report_unmatched <- function(df, label) {
+  unmatched <- df %>%
+    filter(is.na(Category), !is.na(Outcome)) %>%
+    pull(Outcome) %>%
+    unique()
+
+  if (length(unmatched) > 0) {
+    message(sprintf("[%s] Outcomes not matched to a category:", label))
+    print(unmatched)
+  } else {
+    message(sprintf("[%s] All outcomes assigned to a category.", label))
+  }
+}
+
+
+```
+
+
+##### All Obstetrics outcomes
+
+```{r}
+
+input_file <- "Complex MM.xlsx"
+
+df_0v1 <- read_excel(input_file, sheet = "0 vs 1 ", skip = 1) [,-c(11:13)] %>%
+  categorise_outcomes()
+
+report_unmatched(df_0v1, "0 vs 1")
+
+figure3_data_0vs_1 = df_0v1
+
+names(figure3_data_0vs_1) = c("Category","Outcome","EventsInUnexposed","Unexposed","EventsInExposed","Exposed","RR","LL","UL","Model","Dataset")
+
+df_0v2 <- read_excel(input_file, sheet = "0 vs 2", skip = 1) [,-c(11:13)] %>%
+  categorise_outcomes()
+
+report_unmatched(df_0v2, "0 vs 2")
+
+figure3_data_0vs_2 = df_0v2
+
+names(figure3_data_0vs_2) = c("Category","Outcome","EventsInUnexposed","Unexposed","EventsInExposed","Exposed","RR","LL","UL","Model","Dataset")
+
+df_0v3 <- read_excel(input_file, sheet = "0 vs 3", skip = 1) [,-c(11:13)] %>%
+  categorise_outcomes()
+
+report_unmatched(df_0v3, "0 vs 3")
+
+figure3_data_0vs_3 = df_0v3
+
+names(figure3_data_0vs_3) = c("Category","Outcome","EventsInUnexposed","Unexposed","EventsInExposed","Exposed","RR","LL","UL","Model","Dataset")
+
+figure3_data = rbind(figure3_data_0vs_1,figure3_data_0vs_2,figure3_data_0vs_3)
+
+figure3_data <- figure3_data %>%
+  dplyr::filter(!(Dataset == "CPRD" & Outcome == "Neonatal death"))
+
+
+figure3_data = filter(figure3_data,!Outcome %in% c("Length of stay (continuous)"))
+
+
+```
+
+
+```{r}
+str(figure3_data)
+```
+
+
+
+```{r}
+figure3_data = subset(figure3_data,!is.na(figure3_data$RR))
+
+figure3_data$RR = round(as.numeric(figure3_data$RR),3)
+figure3_data$LL = round(as.numeric(figure3_data$LL),3)
+figure3_data$UL = round(as.numeric(figure3_data$UL),3)
+
+```
+
+```{r}
+figure3_data$MM_Definition = ifelse(figure3_data$Model=="0 vs 1","1",ifelse(figure3_data$Model=="0 vs 2","2","3+"))
+
+figure3_data$MM_Definition = factor(figure3_data$MM_Definition,levels = c("1","2","3+"))
+```
+
+
+##### Meta-analysis of Figure 3
+
+##### Remove pooled (To add later after meta-analysis)
+
+```{r}
+
+figure3_data = subset(figure3_data,figure3_data$Dataset!="Pooled")
+
+```
+
+```{r}
+
+```
+
+
+###### 0 vs 1
+
+```{r}
+
+zero_vs_one = subset(figure3_data,figure3_data$MM_Definition==1)
+
+df =zero_vs_one
+```
+
+
+```{r}
+# Convert HR to log(HR) and compute standard error
+df$logRR <- log(df$RR)
+df$SE <- (log(df$UL) - log(df$LL)) / (2 * 1.96)
+
+df = subset(df,!is.na(df$SE))
+
+```
+
+
+```{r}
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("0 vs 1 Forest plot.jpg", width = 1800, height = 2900, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE)  
+
+dev.off()
+
+```
+
+```{r}
+meta_result
+```
+
+
+
+
+```{r}
+library(writexl)
+```
+
+
+```{r}
+
+subgroup_estimates <- list()
+
+for (group in unique(df$Outcome)) {
+  sub_df <- df %>% filter(Outcome == group)
+  
+  m <- metagen(
+    TE = logRR,
+    seTE = SE,
+    studlab = Dataset,
+    data = sub_df,
+    sm = "RR",
+    method.tau = "REML",
+    comb.fixed = FALSE,
+    comb.random = TRUE
+  )
+  
+  subgroup_estimates[[group]] <- data.frame(
+    Outcome = group,
+    RR = round(exp(m$TE.random), 2),
+    Lower_CI = round(exp(m$lower.random), 2),
+    Upper_CI = round(exp(m$upper.random), 2),
+  tau2 = m$tau2,
+  I2 = m$I2,
+  Q = m$Q,
+  pval = m$pval.Q
+  )
+}
+
+
+df_subgroups <- bind_rows(subgroup_estimates)
+
+# Add formatted heterogeneity column
+df_subgroups$Heterogeneity <- sprintf(
+  "Heterogeneity: %.1f%%, tau² = %.5f, p = %s",
+  df_subgroups$I2*100,
+  df_subgroups$tau2,
+  format.pval(df_subgroups$pval, digits = 3, eps = 0.001)
+)
+
+write_xlsx(df_subgroups[,c(1,9)], "0 vs 1_heterogeneity.xlsx")
+write_xlsx(df_subgroups[,c(1:4)], "0 vs 1_meta_results.xlsx")
+
+
+zero_vs_one_pooled = df_subgroups[,c(1:4)]
+
+```
+
+###### 0 vs 2
+
+```{r}
+
+zero_vs_one = subset(figure3_data,figure3_data$MM_Definition==2)
+df =zero_vs_one
+
+```
+
+
+```{r}
+# Convert HR to log(HR) and compute standard error
+df$logRR <- log(df$RR)
+df$SE <- (log(df$UL) - log(df$LL)) / (2 * 1.96)
+
+df = subset(df,!is.na(df$SE))
+
+```
+
+
+```{r}
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("0 vs 2 Forest plot.jpg", width = 1800, height = 2900, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE)    
+
+dev.off()
+
+```
+
+
+```{r}
+meta_result
+```
+
+
+
+
+```{r}
+subgroup_estimates <- list()
+
+for (group in unique(df$Outcome)) {
+  sub_df <- df %>% filter(Outcome == group)
+  
+  m <- metagen(
+    TE = logRR,
+    seTE = SE,
+    studlab = Dataset,
+    data = sub_df,
+    sm = "RR",
+    method.tau = "REML",
+    comb.fixed = FALSE,
+    comb.random = TRUE
+  )
+  
+  subgroup_estimates[[group]] <- data.frame(
+    Outcome = group,
+    RR = round(exp(m$TE.random), 2),
+    Lower_CI = round(exp(m$lower.random), 2),
+    Upper_CI = round(exp(m$upper.random), 2),
+  tau2 = m$tau2,
+  I2 = m$I2,
+  Q = m$Q,
+  pval = m$pval.Q
+  )
+}
+
+
+df_subgroups <- bind_rows(subgroup_estimates)
+
+# Add formatted heterogeneity column
+df_subgroups$Heterogeneity <- sprintf(
+  "Heterogeneity: %.1f%%, tau² = %.5f, p = %s",
+  df_subgroups$I2*100,
+  df_subgroups$tau2,
+  format.pval(df_subgroups$pval, digits = 3, eps = 0.001)
+)
+
+write_xlsx(df_subgroups[,c(1,9)], "0 vs 2_heterogeneity.xlsx")
+write_xlsx(df_subgroups[,c(1:4)], "0 vs 2_meta_results.xlsx")
+
+zero_vs_two_pooled = df_subgroups[,c(1:4)]
+
+
+```
+
+
+
+###### 0 vs 3+
+
+```{r}
+
+zero_vs_one = subset(figure3_data,figure3_data$MM_Definition=="3+")
+df =zero_vs_one
+
+```
+
+
+```{r}
+# Convert HR to log(HR) and compute standard error
+df$logRR <- log(df$RR)
+df$SE <- (log(df$UL) - log(df$LL)) / (2 * 1.96)
+
+df = subset(df,!is.na(df$SE))
+
+```
+
+
+```{r}
+
+# Perform meta-analysis with Dataset as subgroups
+meta_result <- metagen(TE = logRR, 
+                       seTE = SE, 
+                       studlab = Dataset, 
+                       data = df, 
+                       sm = "RR", 
+                       method.tau = "REML",
+                       byvar = Outcome,
+                       comb.fixed = F,  
+                       comb.random = T,
+                       overall = FALSE,
+                       print.subgroup = TRUE)  
+
+# Generate forest plot by Dataset
+
+jpeg("0 vs 3+ Forest plot.jpg", width = 1800, height = 2900, res = 150)
+
+forest(meta_result, 
+       leftcols = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"), 
+       leftlabs = c("Dataset", "EventsInUnexposed","Unexposed","EventsInExposed","Exposed"),
+       rightcols = c("effect", "ci", "w.random"),
+       rightlabs = c("RR", "95% CI", "Weight"),
+       print.byvar = TRUE,  
+       colgap.forest = "4mm",
+       overall.hetstat = FALSE,
+       test.subgroup = FALSE)    
+
+dev.off()
+
+```
+
+
+```{r}
+meta_result
+```
+
+
+
+
+```{r}
+
+subgroup_estimates <- list()
+
+for (group in unique(df$Outcome)) {
+  sub_df <- df %>% filter(Outcome == group)
+  
+  m <- metagen(
+    TE = logRR,
+    seTE = SE,
+    studlab = Dataset,
+    data = sub_df,
+    sm = "RR",
+    method.tau = "REML",
+    comb.fixed = FALSE,
+    comb.random = TRUE
+  )
+  
+  subgroup_estimates[[group]] <- data.frame(
+    Outcome = group,
+    RR = round(exp(m$TE.random), 2),
+    Lower_CI = round(exp(m$lower.random), 2),
+    Upper_CI = round(exp(m$upper.random), 2),
+  tau2 = m$tau2,
+  I2 = m$I2,
+  Q = m$Q,
+  pval = m$pval.Q
+  )
+}
+
+
+df_subgroups <- bind_rows(subgroup_estimates)
+
+# Add formatted heterogeneity column
+df_subgroups$Heterogeneity <- sprintf(
+  "Heterogeneity: %.1f%%, tau² = %.5f, p = %s",
+  df_subgroups$I2*100,
+  df_subgroups$tau2,
+  format.pval(df_subgroups$pval, digits = 3, eps = 0.001)
+)
+
+write_xlsx(df_subgroups[,c(1,9)], "0 vs 3+_heterogeneity.xlsx")
+
+write_xlsx(df_subgroups[,c(1:4)], "0 vs 3+_meta_results.xlsx")
+
+zero_vs_3plus_pooled = df_subgroups[,c(1:4)]
+
+```
+
+
+
+#### Append pooled estimates to the figure3 data
+
+```{r}
+
+zero_vs_one_pooled$Dataset = "Pooled"
+zero_vs_one_pooled$Model = "0 vs 1"
+
+zero_vs_two_pooled$Dataset = "Pooled"
+zero_vs_two_pooled$Model = "0 vs 2"
+
+zero_vs_3plus_pooled$Dataset = "Pooled"
+zero_vs_3plus_pooled$Model = "0 vs 3"
+
+
+all_pooled = rbind(zero_vs_one_pooled,zero_vs_two_pooled,zero_vs_3plus_pooled)
+names(all_pooled)=c("Outcome","RR","LL","UL","Dataset","Model")
+
+all_pooled <- all_pooled %>%
+  mutate(
+    Category = case_when(
+      Outcome %in% maternal_health    ~ "Maternal Health Outcomes",
+      Outcome %in% obstetric_delivery ~ "Obstetric / Delivery Outcomes",
+      Outcome %in% child              ~ "Infant/Child Outcomes",
+      Outcome %in% mental_health      ~ "Maternal mental Health",
+      Outcome %in% service_use        ~ "Service Utilisation Outcomes",
+      TRUE                            ~ NA_character_
+    )
+  ) %>%
+  relocate(Category, .before = Outcome)
+```
+
+
+```{r}
+figure3_data = figure3_data %>% dplyr::select("Category","Outcome","RR","LL","UL","Dataset","Model")
+figure3_data = rbind(figure3_data,all_pooled)
+
+
+```
+
+### Combined Plot
+
+
+```{r}
+figure3_data = subset(figure3_data,!is.na(figure3_data$RR))
+
+# figure3_data$RR = round(as.numeric(figure3_data$RR),2)
+# figure3_data$LL = round(as.numeric(figure3_data$LL),2)
+# figure3_data$UL = round(as.numeric(figure3_data$UL),2)
+
+```
+
+
+#### Full plot
+
+```{r}
+
+figure3_data$Dataset = factor(figure3_data$Dataset,levels = c("Born in Bradford","CPRD","NI","SAIL","Scotland routine health records","Pooled"))
+
+
+figure3_data$Dataset = revalue(figure3_data$Dataset,c(
+  "Born in Bradford"="BiB",
+  "Scotland routine health records"="SRHR"))
+
+figure3_data$Dataset = factor(figure3_data$Dataset,levels = c("BiB","CPRD","NI","SAIL","SRHR","Pooled"))
+
+
+figure3_data$MM_Definition = ifelse(figure3_data$Model=="0 vs 1","1",ifelse(figure3_data$Model=="0 vs 2","2","3+"))
+
+figure3_data$MM_Definition = factor(figure3_data$MM_Definition,levels = c("1","2","3+"))
+
+
+p1=ggplot(figure3_data, aes(x=Dataset, y=RR, group=MM_Definition, color=MM_Definition)) +
+  geom_point(position=position_dodge(0.5),size=8)+ylab("Relative Risk (95% CI)")+xlab("Dataset")+
+  geom_abline(intercept = 1, slope = 0, colour = "red", linetype = 2, size=3)+labs(color = "Number of conditions")+
+  geom_errorbar(aes(ymin=LL, ymax=UL), width=0.2,size=3,
+                 position=position_dodge(0.5))+theme_bw()+
+  facet_wrap(~Outcome)+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 50),
+        axis.text.y = element_text(size = 50),
+        axis.text=element_text(size=50),legend.justification = c(1, 1))
+
+ggsave(p1,filename = "Figure 3  ALL OUTCOMES V1.jpeg",width = 49,height = 40, dpi=300)
+
+```
+
+
+
+```{r}
+p1=ggplot(figure3_data, aes(x=Dataset, y=RR, group=MM_Definition, color=MM_Definition)) +
+  geom_point(position=position_dodge(0.9),size=8)+ylab("Relative Risk (95% CI)")+xlab("Dataset")+
+  geom_abline(intercept = 1, slope = 0, colour = "red", linetype = 2, size=3)+labs(color = "Number of conditions")+
+  geom_errorbar(aes(ymin=LL, ymax=UL), width=0.2,size=3,
+                 position=position_dodge(0.9))+theme_bw()+
+  facet_wrap(~Outcome, scales = "free_y", ncol=3)+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 50),
+        axis.text.y = element_text(size = 50),
+        axis.text=element_text(size=50),legend.justification = c(1, 1))
+
+ggsave(p1,filename = "Figure 3 ALL OUTCOMES V2.jpeg",width = 49,height = 40, dpi=300)
+
+
+
+
+```
+
+
+
+
+```{r}
+
+library(ggplot2)
+
+figure3_data2 <- subset(figure3_data, Dataset == "Pooled")
+
+df = figure3_data2
+
+
+library(ggplot2)
+library(dplyr)
+library(grid)
+
+# Install once if needed:
+# install.packages("gridExtra")
+
+library(gridExtra)
+
+panel_size <- unit(3, "in")
+
+
+# 1. Select pooled data ----------------------------------------------------
+
+df <- subset(figure3_data, Dataset == "Pooled")
+
+
+# 2. Harmonise outcome names ----------------------------------------------
+
+df <- df %>%
+  mutate(
+    Outcome = trimws(as.character(Outcome)),
+    Outcome = dplyr::recode(
+      Outcome,
+      "Length of stay (3-6 days)" =
+        "Length of stay 3-6 days",
+      "Length of stay (>=7 days)" =
+        "Length of stay >=7 days",
+      "Length of stay 3to7days v 0to2days" =
+        "Length of stay 3-6 days",
+      "Length of stay 7plusdays v 0to2days" =
+        "Length of stay >=7 days",
+      "Postnatal stay (3-6 days)" =
+        "Postnatal stay 3-6 days",
+      "Postnatal stay (>=7 days)" =
+        "Postnatal stay >=7 days",
+      "Caeserian section" =
+        "Caesarean section",
+      "Caesarean section (elective)" =
+        "Elective caesarean section",
+      "Caesarean section (emergency)" =
+        "Emergency caesarean section",
+      "Early maternal deaths" =
+        "Maternal death",
+      "Late maternal deaths" =
+        "Late maternal death",
+      "Epidural" =
+        "Epidural anaesthesia (pre-delivery)",
+      "Induction of labour" =
+        "Induction of labour (any)",
+      "Premature rupture of membrane" =
+        "Prelabour rupture of membranes (PROM)",
+      "Severe maternal morbidity" =
+        "Severe maternal morbidity (overall)",
+      "Hospital admission" =
+        "Hospital admission within 3 months postpartum",
+      "LGA" =
+        "Large for gestational age",
+      "SGA" =
+        "Small for gestational age",
+      "Postnatal depression" =
+        "Postpartum depression",
+      "Postnatal anxiety" =
+        "Postpartum anxiety",
+      .default = Outcome
+    ),
+    MM_Definition = factor(
+      trimws(as.character(MM_Definition)),
+      levels = c("1", "2", "3+")
+    )
+  )
+
+
+# 3. Define groups ---------------------------------------------------------
+
+maternal_health <- c(
+  "Postpartum haemorrhage",
+  "Maternal infection",
+  "Hysterectomy",
+  "Severe maternal morbidity (overall)",
+  "Maternal death",
+  "Late maternal death"
+)
+
+obstetric_delivery <- c(
+  "Preterm birth",
+  "Prelabour rupture of membranes (PROM)",
+  "Birth without intervention",
+  "Epidural anaesthesia (pre-delivery)",
+  "Spontaneous vaginal birth",
+  "Induction of labour (any)",
+  "Augmentation of labour",
+  "Instrumental birth",
+  "Perineal tear",
+  "Shoulder dystocia",
+  "Caesarean section",
+  "Emergency caesarean section",
+  "Elective caesarean section"
+)
+
+child <- c(
+  "APGAR",
+  "Stillbirth",
+  "Small for gestational age",
+  "Large for gestational age",
+  "Neonatal death",
+  "Infant death"
+)
+
+mental_health <- c(
+  "Postpartum depression",
+  "Postpartum anxiety"
+)
+
+service_use <- c(
+  "Hospital admission within 3 months postpartum",
+  "ICU admission within 3 months postpartum",
+  "Length of stay 3-6 days",
+  "Length of stay >=7 days",
+  "Length of stay (continuous)",
+  "Postnatal stay 3-6 days",
+  "Postnatal stay >=7 days",
+  "Actual place of birth (home vs hospital)",
+  "Intended place of birth (home vs hospital)"
+)
+
+outcome_groups <- list(
+  "A. Maternal health" = maternal_health,
+  "B. Obstetric and delivery outcomes" = obstetric_delivery,
+  "C. Infant and child outcomes" = child,
+  "D. Mental health" = mental_health,
+  "E. Service use" = service_use
+)
+
+unmatched <- setdiff(
+  unique(df$Outcome),
+  unlist(outcome_groups, use.names = FALSE)
+)
+
+if (length(unmatched) > 0) {
+  stop("Unassigned outcomes: ", paste(unmatched, collapse = ", "))
+}
+
+
+# 4. Create grouped plots --------------------------------------------------
+
+make_group_plot <- function(group_title, outcomes) {
+
+  plot_data <- df %>%
+    filter(Outcome %in% outcomes) %>%
+    mutate(Outcome = factor(Outcome, levels = outcomes))
+
+  ggplot(
+    plot_data,
+    aes(
+      x = MM_Definition,
+      y = RR,
+      group = MM_Definition,
+      colour = MM_Definition
+    )
+  ) +
+    geom_point(
+      position = position_dodge(0.9),
+      size = 8
+    ) +
+    geom_hline(
+      yintercept = 1,
+      colour = "red",
+      linetype = 2,
+      linewidth = 3
+    ) +
+    geom_errorbar(
+      aes(ymin = LL, ymax = UL),
+      width = 0.2,
+      linewidth = 3,
+      position = position_dodge(0.9)
+    ) +
+    facet_wrap(
+      ~Outcome,
+      scales = "free_y",
+      ncol = 3,
+      labeller = label_wrap_gen(width = 16)
+    ) +
+    scale_x_discrete(drop = FALSE) +
+    scale_colour_discrete(drop = FALSE) +
+    scale_y_continuous(
+      limits = function(x) {
+        c(0.5, ceiling(max(x, na.rm = TRUE) * 10) / 10)
+      },
+      expand = expansion(mult = c(0, 0.05)),
+      oob = scales::oob_keep
+    ) +
+    labs(
+      title = group_title,
+      x = "Number of conditions",
+      y = "Relative Risk (95% CI)"
+    ) +
+    theme_bw() +
+    theme(
+      text = element_text(
+        size = 25, face = "bold", hjust = 0.5
+      ),
+      plot.title = element_text(
+        size = 30,
+        face = "bold",
+        hjust = 0,
+        margin = margin(b = 15)
+      ),
+      plot.title.position = "plot",
+      strip.text = element_text(
+        size = 25,
+        face = "bold",
+        margin = margin(8, 5, 8, 5)
+      ),
+      axis.title = element_text(
+        size = 25, face = "bold"
+      ),
+      axis.text = element_text(size = 25),
+      axis.text.x = element_text(
+        angle = 90, hjust = 1, vjust = 1, size = 25
+      ),
+      axis.text.y = element_text(size = 25),
+      legend.position = "none",
+      panel.spacing = unit(0.3, "in"),
+      plot.margin = margin(10, 10, 25, 10)
+    )
+}
+
+group_plots <- Map(
+  make_group_plot,
+  names(outcome_groups),
+  outcome_groups
+)
+
+
+# 5. Give every outcome an equal square plotting area ----------------------
+
+make_square_grob <- function(p) {
+
+  g <- ggplotGrob(p)
+
+  panel_index <- grepl("^panel($|-)", g$layout$name)
+
+  panel_columns <- unique(g$layout$l[panel_index])
+  panel_rows <- unique(g$layout$t[panel_index])
+
+  g$widths[panel_columns] <- rep(
+    panel_size, length(panel_columns)
+  )
+
+  g$heights[panel_rows] <- rep(
+    panel_size, length(panel_rows)
+  )
+
+  g
+}
+
+group_grobs <- lapply(group_plots, make_square_grob)
+
+
+# 6. Measure the content and align groups to the left -----------------------
+
+group_widths <- vapply(
+  group_grobs,
+  function(g) {
+    convertWidth(sum(g$widths), "in", valueOnly = TRUE)
+  },
+  numeric(1)
+)
+
+group_heights <- vapply(
+  group_grobs,
+  function(g) {
+    convertHeight(sum(g$heights), "in", valueOnly = TRUE)
+  },
+  numeric(1)
+)
+
+# Use the actual content dimensions rather than a large fixed canvas
+figure_width <- max(group_widths)
+figure_height <- sum(group_heights)
+
+# Position each group at the top-left of its allocated section
+aligned_grobs <- lapply(
+  seq_along(group_grobs),
+  function(i) {
+    grobTree(
+      group_grobs[[i]],
+      vp = viewport(
+        x = unit(0, "npc"),
+        y = unit(1, "npc"),
+        width = unit(group_widths[i], "in"),
+        height = unit(group_heights[i], "in"),
+        just = c("left", "top")
+      )
+    )
+  }
+)
+
+final_plot <- gridExtra::arrangeGrob(
+  grobs = aligned_grobs,
+  ncol = 1,
+  widths = unit(figure_width, "in"),
+  heights = unit(group_heights, "in"),
+  padding = unit(0, "in")
+)
+
+
+# 7. Save -----------------------------------------------------------------
+
+ggsave(
+  filename = "Figure3_Pooled_Five_Groups.jpeg",
+  plot = final_plot,
+  width = figure_width,
+  height = figure_height,
+  units = "in",
+  dpi = 300,
+  limitsize = FALSE,
+  bg = "white"
+)
+
+# A small RStudio plotting pane may not fit the full figure.
+# View the saved image to inspect the complete layout.
+
+
+
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+
+
+# 1. Select pooled data ----------------------------------------------------
+
+df <- subset(figure3_data, Dataset == "Pooled")
+
+
+# 2. Harmonise outcome names ----------------------------------------------
+
+df <- df %>%
+  mutate(
+    Outcome = trimws(as.character(Outcome)),
+    Outcome = dplyr::recode(
+      Outcome,
+      "Length of stay (3-6 days)" =
+        "Length of stay 3-6 days",
+      "Length of stay (>=7 days)" =
+        "Length of stay >=7 days",
+      "Length of stay 3to7days v 0to2days" =
+        "Length of stay 3-6 days",
+      "Length of stay 7plusdays v 0to2days" =
+        "Length of stay >=7 days",
+      "Postnatal stay (3-6 days)" =
+        "Postnatal stay 3-6 days",
+      "Postnatal stay (>=7 days)" =
+        "Postnatal stay >=7 days",
+      "Caeserian section" =
+        "Caesarean section",
+      "Caesarean section (elective)" =
+        "Elective caesarean section",
+      "Caesarean section (emergency)" =
+        "Emergency caesarean section",
+      "Early maternal deaths" =
+        "Maternal death",
+      "Late maternal deaths" =
+        "Late maternal death",
+      "Epidural" =
+        "Epidural anaesthesia (pre-delivery)",
+      "Induction of labour" =
+        "Induction of labour (any)",
+      "Premature rupture of membrane" =
+        "Prelabour rupture of membranes (PROM)",
+      "Severe maternal morbidity" =
+        "Severe maternal morbidity (overall)",
+      "Hospital admission" =
+        "Hospital admission within 3 months postpartum",
+      "LGA" =
+        "Large for gestational age",
+      "SGA" =
+        "Small for gestational age",
+      "Postnatal depression" =
+        "Postpartum depression",
+      "Postnatal anxiety" =
+        "Postpartum anxiety",
+      .default = Outcome
+    ),
+    MM_Definition = factor(
+      trimws(as.character(MM_Definition)),
+      levels = c("1", "2", "3+")
+    )
+  )
+
+
+# 3. Define outcome groups -------------------------------------------------
+
+maternal_health <- c(
+  "Postpartum haemorrhage",
+  "Maternal infection",
+  "Hysterectomy",
+  "Severe maternal morbidity (overall)",
+  "Maternal death",
+  "Late maternal death"
+)
+
+obstetric_delivery <- c(
+  "Preterm birth",
+  "Prelabour rupture of membranes (PROM)",
+  "Birth without intervention",
+  "Epidural anaesthesia (pre-delivery)",
+  "Spontaneous vaginal birth",
+  "Induction of labour (any)",
+  "Augmentation of labour",
+  "Instrumental birth",
+  "Perineal tear",
+  "Shoulder dystocia",
+  "Caesarean section",
+  "Emergency caesarean section",
+  "Elective caesarean section"
+)
+
+child <- c(
+  "APGAR",
+  "Stillbirth",
+  "Small for gestational age",
+  "Large for gestational age",
+  "Neonatal death",
+  "Infant death"
+)
+
+mental_health <- c(
+  "Postpartum depression",
+  "Postpartum anxiety"
+)
+
+service_use <- c(
+  "Hospital admission within 3 months postpartum",
+  "ICU admission within 3 months postpartum",
+  "Length of stay 3-6 days",
+  "Length of stay >=7 days",
+  "Length of stay (continuous)",
+  "Postnatal stay 3-6 days",
+  "Postnatal stay >=7 days",
+  "Actual place of birth (home vs hospital)",
+  "Intended place of birth (home vs hospital)"
+)
+
+outcome_groups <- list(
+  "A. Maternal health" = maternal_health,
+  "B. Obstetric and delivery outcomes" = obstetric_delivery,
+  "C. Infant and child outcomes" = child,
+  "D. Mental health" = mental_health,
+  "E. Service use" = service_use
+)
+
+unmatched <- setdiff(
+  unique(df$Outcome),
+  unlist(outcome_groups, use.names = FALSE)
+)
+
+if (length(unmatched) > 0) {
+  stop("Unassigned outcomes: ", paste(unmatched, collapse = ", "))
+}
+
+
+# 4. Create grouped plots --------------------------------------------------
+
+make_group_plot <- function(group_title, outcomes) {
+
+  plot_data <- df %>%
+    filter(Outcome %in% outcomes) %>%
+    mutate(Outcome = factor(Outcome, levels = outcomes))
+
+  ggplot(
+    plot_data,
+    aes(
+      x = MM_Definition,
+      y = RR,
+      group = MM_Definition,
+      colour = MM_Definition
+    )
+  ) +
+    geom_point(
+      position = position_dodge(0.9),
+      size = 8
+    ) +
+    geom_hline(
+      yintercept = 1,
+      colour = "red",
+      linetype = 2,
+      linewidth = 3
+    ) +
+    geom_errorbar(
+      aes(ymin = LL, ymax = UL),
+      width = 0.2,
+      linewidth = 3,
+      position = position_dodge(0.9)
+    ) +
+    facet_wrap(
+      ~Outcome,
+      scales = "free_y",
+      ncol = 3,
+      labeller = label_wrap_gen(width = 32)
+    ) +
+    scale_x_discrete(drop = FALSE) +
+    scale_colour_discrete(drop = FALSE) +
+    scale_y_continuous(
+      limits = function(x) {
+        c(0.5, ceiling(max(x, na.rm = TRUE) * 10) / 10)
+      },
+      expand = expansion(mult = c(0, 0.05)),
+      oob = scales::oob_keep
+    ) +
+    labs(
+      title = group_title,
+      x = "Number of conditions",
+      y = "Relative Risk (95% CI)"
+    ) +
+    theme_bw() +
+    theme(
+      text = element_text(
+        size = 25, face = "bold", hjust = 0.5
+      ),
+      plot.title = element_text(
+        size = 30,
+        face = "bold",
+        hjust = 0,
+        margin = margin(b = 12)
+      ),
+      plot.title.position = "plot",
+      strip.text = element_text(
+        size = 25,
+        face = "bold",
+        margin = margin(8, 5, 8, 5)
+      ),
+      axis.title = element_text(
+        size = 25, face = "bold"
+      ),
+      axis.text = element_text(size = 25),
+      axis.text.x = element_text(
+        angle = 90, hjust = 1, vjust = 1, size = 25
+      ),
+      axis.text.y = element_text(size = 25),
+      legend.position = "none",
+      panel.spacing = unit(0.8, "lines"),
+      plot.margin = margin(5, 5, 15, 5)
+    )
+}
+
+group_plots <- Map(
+  make_group_plot,
+  names(outcome_groups),
+  outcome_groups
+)
+
+
+# 5. Combine groups using the available figure space -----------------------
+
+group_rows <- vapply(
+  outcome_groups,
+  function(outcomes) {
+    ceiling(sum(outcomes %in% unique(df$Outcome)) / 3)
+  },
+  numeric(1)
+)
+
+# Extra allowance for each group's heading and axis titles
+final_plot <- wrap_plots(
+  group_plots,
+  ncol = 1,
+  heights = group_rows + 0.5
+)
+
+print(final_plot)
+
+
+# 6. Save at the requested full dimensions ---------------------------------
+
+ggsave(
+  filename = "Figure3_Pooled_Five_Groups.jpeg",
+  plot = final_plot,
+  width = 30,
+  height = 49,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+```
+
+
+```{r}
+
+library(ggplot2)
+library(dplyr)
+
+
+# 1. Select pooled data ----------------------------------------------------
+
+df <- subset(figure3_data, Dataset == "Pooled")
+
+
+# 2. Harmonise outcome names ----------------------------------------------
+
+df <- df %>%
+  mutate(
+    Outcome = trimws(as.character(Outcome)),
+    Outcome = dplyr::recode(
+      Outcome,
+      "Length of stay (3-6 days)" =
+        "Length of stay 3-6 days",
+      "Length of stay (>=7 days)" =
+        "Length of stay >=7 days",
+      "Length of stay 3to7days v 0to2days" =
+        "Length of stay 3-6 days",
+      "Length of stay 7plusdays v 0to2days" =
+        "Length of stay >=7 days",
+      "Postnatal stay (3-6 days)" =
+        "Postnatal stay 3-6 days",
+      "Postnatal stay (>=7 days)" =
+        "Postnatal stay >=7 days",
+      "Caeserian section" =
+        "Caesarean section",
+      "Caesarean section (elective)" =
+        "Elective caesarean section",
+      "Caesarean section (emergency)" =
+        "Emergency caesarean section",
+      "Early maternal deaths" =
+        "Maternal death",
+      "Late maternal deaths" =
+        "Late maternal death",
+      "Epidural" =
+        "Epidural anaesthesia (pre-delivery)",
+      "Induction of labour" =
+        "Induction of labour (any)",
+      "Premature rupture of membrane" =
+        "Prelabour rupture of membranes (PROM)",
+      "Severe maternal morbidity" =
+        "Severe maternal morbidity (overall)",
+      "Hospital admission" =
+        "Hospital admission within 3 months postpartum",
+      "LGA" =
+        "Large for gestational age",
+      "SGA" =
+        "Small for gestational age",
+      "Postnatal depression" =
+        "Postpartum depression",
+      "Postnatal anxiety" =
+        "Postpartum anxiety",
+      .default = Outcome
+    ),
+    MM_Definition = factor(
+      trimws(as.character(MM_Definition)),
+      levels = c("1", "2", "3+")
+    )
+  )
+
+
+# 3. Set outcome ordering --------------------------------------------------
+
+outcome_order <- c(
+  # Maternal health
+  "Postpartum haemorrhage",
+  "Maternal infection",
+  "Hysterectomy",
+  "Severe maternal morbidity (overall)",
+  "Maternal death",
+  "Late maternal death",
+
+  # Obstetric and delivery outcomes
+  "Preterm birth",
+  "Prelabour rupture of membranes (PROM)",
+  "Birth without intervention",
+  "Epidural anaesthesia (pre-delivery)",
+  "Spontaneous vaginal birth",
+  "Induction of labour (any)",
+  "Augmentation of labour",
+  "Instrumental birth",
+  "Perineal tear",
+  "Shoulder dystocia",
+  "Caesarean section",
+  "Emergency caesarean section",
+  "Elective caesarean section",
+
+  # Infant and child outcomes
+  "APGAR",
+  "Stillbirth",
+  "Small for gestational age",
+  "Large for gestational age",
+  "Neonatal death",
+  "Infant death",
+
+  # Mental health
+  "Postpartum depression",
+  "Postpartum anxiety",
+
+  # Service use
+  "Hospital admission within 3 months postpartum",
+  "ICU admission within 3 months postpartum",
+  "Length of stay 3-6 days",
+  "Length of stay >=7 days",
+  "Length of stay (continuous)",
+  "Postnatal stay 3-6 days",
+  "Postnatal stay >=7 days",
+  "Actual place of birth (home vs hospital)",
+  "Intended place of birth (home vs hospital)"
+)
+
+unmatched <- setdiff(unique(df$Outcome), outcome_order)
+
+if (length(unmatched) > 0) {
+  stop("Unassigned outcomes: ", paste(unmatched, collapse = ", "))
+}
+
+df <- df %>%
+  mutate(Outcome = factor(Outcome, levels = outcome_order))
+
+
+# 4. Plot all outcomes with separate y-axis scales -------------------------
+
+all_outcomes_plot <- ggplot(
+  df,
+  aes(
+    x = MM_Definition,
+    y = RR,
+    group = MM_Definition,
+    colour = MM_Definition
+  )
+) +
+  geom_point(
+    position = position_dodge(0.9),
+    size = 8
+  ) +
+  geom_hline(
+    yintercept = 1,
+    colour = "red",
+    linetype = 2,
+    linewidth = 3
+  ) +
+  geom_errorbar(
+    aes(ymin = LL, ymax = UL),
+    width = 0.2,
+    linewidth = 3,
+    position = position_dodge(0.9)
+  ) +
+  facet_wrap(
+    ~Outcome,
+    scales = "free_y",
+    ncol = 3,
+    labeller = label_wrap_gen(width = 32)
+  ) +
+  scale_x_discrete(drop = FALSE) +
+  scale_colour_discrete(drop = FALSE) +
+  scale_y_continuous(
+    # Separate upper limit for each outcome; all start at 0.5
+    limits = function(x) {
+      c(0.5, ceiling(max(x, na.rm = TRUE) * 10) / 10)
+    },
+    expand = expansion(mult = c(0, 0.05)),
+    oob = scales::oob_keep
+  ) +
+  labs(
+    x = "Number of conditions",
+    y = "Relative Risk (95% CI)"
+  ) +
+  theme_bw() +
+  theme(
+    text = element_text(
+      size = 25, face = "bold", hjust = 0.5
+    ),
+    strip.text = element_text(
+      size = 25,
+      face = "bold",
+      margin = margin(8, 5, 8, 5)
+    ),
+    axis.title = element_text(
+      size = 25, face = "bold"
+    ),
+    axis.text = element_text(size = 25),
+    axis.text.x = element_text(
+      angle = 90, hjust = 1, vjust = 1, size = 25
+    ),
+    axis.text.y = element_text(size = 25),
+    legend.position = "none",
+    panel.spacing = grid::unit(0.8, "lines"),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+
+print(all_outcomes_plot)
+
+
+# 5. Save as a separate version -------------------------------------------
+
+ggsave(
+  filename = "Figure3_Pooled_All_Outcomes_Separate_Axes.jpeg",
+  plot = all_outcomes_plot,
+  width = 30,
+  height = 49,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+
+
+
+
+```
+
+
+```{r}
+
+library(ggplot2)
+library(dplyr)
+
+# Install once if needed:
+# install.packages("ggh4x")
+
+
+# 1. Select pooled data ----------------------------------------------------
+
+df <- subset(figure3_data, Dataset == "Pooled")
+
+
+# 2. Harmonise outcome names ----------------------------------------------
+
+df <- df %>%
+  mutate(
+    Outcome = trimws(as.character(Outcome)),
+    Outcome = dplyr::recode(
+      Outcome,
+      "Length of stay (3-6 days)" =
+        "Length of stay 3-6 days",
+      "Length of stay (>=7 days)" =
+        "Length of stay >=7 days",
+      "Length of stay 3to7days v 0to2days" =
+        "Length of stay 3-6 days",
+      "Length of stay 7plusdays v 0to2days" =
+        "Length of stay >=7 days",
+      "Postnatal stay (3-6 days)" =
+        "Postnatal stay 3-6 days",
+      "Postnatal stay (>=7 days)" =
+        "Postnatal stay >=7 days",
+      "Caeserian section" =
+        "Caesarean section",
+      "Caesarean section (elective)" =
+        "Elective caesarean section",
+      "Caesarean section (emergency)" =
+        "Emergency caesarean section",
+      "Early maternal deaths" =
+        "Maternal death",
+      "Late maternal deaths" =
+        "Late maternal death",
+      "Epidural" =
+        "Epidural anaesthesia (pre-delivery)",
+      "Induction of labour" =
+        "Induction of labour (any)",
+      "Premature rupture of membrane" =
+        "Prelabour rupture of membranes (PROM)",
+      "Severe maternal morbidity" =
+        "Severe maternal morbidity (overall)",
+      "Hospital admission" =
+        "Hospital admission within 3 months postpartum",
+      "LGA" =
+        "Large for gestational age",
+      "SGA" =
+        "Small for gestational age",
+      "Postnatal depression" =
+        "Postpartum depression",
+      "Postnatal anxiety" =
+        "Postpartum anxiety",
+      .default = Outcome
+    ),
+    MM_Definition = factor(
+      trimws(as.character(MM_Definition)),
+      levels = c("1", "2", "3+")
+    )
+  )
+
+
+# 3. Set outcome ordering --------------------------------------------------
+
+outcome_order <- c(
+  # Maternal health
+  "Postpartum haemorrhage",
+  "Maternal infection",
+  "Hysterectomy",
+  "Severe maternal morbidity (overall)",
+  "Maternal death",
+  "Late maternal death",
+
+  # Obstetric and delivery outcomes
+  "Preterm birth",
+  "Prelabour rupture of membranes (PROM)",
+  "Birth without intervention",
+  "Epidural anaesthesia (pre-delivery)",
+  "Spontaneous vaginal birth",
+  "Induction of labour (any)",
+  "Augmentation of labour",
+  "Instrumental birth",
+  "Perineal tear",
+  "Shoulder dystocia",
+  "Caesarean section",
+  "Emergency caesarean section",
+  "Elective caesarean section",
+
+  # Infant and child outcomes
+  "APGAR",
+  "Stillbirth",
+  "Small for gestational age",
+  "Large for gestational age",
+  "Neonatal death",
+  "Infant death",
+
+  # Mental health
+  "Postpartum depression",
+  "Postpartum anxiety",
+
+  # Service use
+  "Hospital admission within 3 months postpartum",
+  "ICU admission within 3 months postpartum",
+  "Length of stay 3-6 days",
+  "Length of stay >=7 days",
+  "Length of stay (continuous)",
+  "Postnatal stay 3-6 days",
+  "Postnatal stay >=7 days",
+  "Actual place of birth (home vs hospital)",
+  "Intended place of birth (home vs hospital)"
+)
+
+unmatched <- setdiff(unique(df$Outcome), outcome_order)
+
+if (length(unmatched) > 0) {
+  stop("Unassigned outcomes: ", paste(unmatched, collapse = ", "))
+}
+
+df <- df %>%
+  mutate(Outcome = factor(Outcome, levels = outcome_order))
+
+
+# 4. Define axis limits ----------------------------------------------------
+
+# Upper limit is outcome-specific, with a minimum of 1.1
+upper_limit <- function(x) {
+  max(1.1, ceiling(max(x, na.rm = TRUE) * 10) / 10)
+}
+
+standard_limits <- function(x) {
+  c(0.5, upper_limit(x))
+}
+
+mortality_limits <- function(x) {
+  c(0, upper_limit(x))
+}
+
+
+# 5. Plot all outcomes -----------------------------------------------------
+
+all_outcomes_plot <- ggplot(
+  df,
+  aes(
+    x = MM_Definition,
+    y = RR,
+    group = MM_Definition,
+    colour = MM_Definition
+  )
+) +
+  geom_point(
+    position = position_dodge(0.9),
+    size = 8
+  ) +
+  geom_hline(
+    yintercept = 1,
+    colour = "red",
+    linetype = 2,
+    linewidth = 3
+  ) +
+  geom_errorbar(
+    aes(ymin = LL, ymax = UL),
+    width = 0.2,
+    linewidth = 3,
+    position = position_dodge(0.9)
+  ) +
+  facet_wrap(
+    ~Outcome,
+    scales = "free_y",
+    ncol = 3,
+    labeller = label_wrap_gen(width = 32)
+  ) +
+  scale_x_discrete(drop = FALSE) +
+  scale_colour_discrete(drop = FALSE) +
+  ggh4x::facetted_pos_scales(
+    y = list(
+      # Lower limit of zero for both maternal mortality outcomes
+      Outcome %in% c("Maternal death", "Late maternal death") ~
+        scale_y_continuous(
+          limits = mortality_limits,
+          expand = expansion(mult = c(0, 0.05))
+        ),
+
+      # Lower limit of 0.5 for all other outcomes
+      TRUE ~
+        scale_y_continuous(
+          limits = standard_limits,
+          expand = expansion(mult = c(0, 0.05))
+        )
+    )
+  ) +
+  labs(
+    x = "Number of conditions",
+    y = "Relative Risk (95% CI)"
+  ) +
+  theme_bw() +
+  theme(
+    text = element_text(
+      size = 25, face = "bold", hjust = 0.5
+    ),
+    strip.text = element_text(
+      size = 25,
+      face = "bold",
+      margin = margin(8, 5, 8, 5)
+    ),
+    axis.title = element_text(
+      size = 25, face = "bold"
+    ),
+    axis.text = element_text(size = 25),
+    axis.text.x = element_text(
+      angle = 90, hjust = 1, vjust = 1, size = 25
+    ),
+    axis.text.y = element_text(size = 25),
+    legend.position = "none",
+    panel.spacing = grid::unit(0.8, "lines"),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+
+print(all_outcomes_plot)
+
+
+# 6. Save -----------------------------------------------------------------
+
+ggsave(
+  filename = "Figure3_Pooled_All_Outcomes_Separate_Axes.jpeg",
+  plot = all_outcomes_plot,
+  width = 30,
+  height = 49,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+
+
+
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+
+# 1. Select pooled data ----------------------------------------------------
+
+df <- subset(figure3_data, Dataset == "Pooled")
+
+
+# 2. Harmonise outcome names ----------------------------------------------
+
+df <- df %>%
+  mutate(
+    Outcome = trimws(as.character(Outcome)),
+    Outcome = dplyr::recode(
+      Outcome,
+      "Length of stay (3-6 days)" =
+        "Length of stay 3-6 days",
+      "Length of stay (>=7 days)" =
+        "Length of stay >=7 days",
+      "Length of stay 3to7days v 0to2days" =
+        "Length of stay 3-6 days",
+      "Length of stay 7plusdays v 0to2days" =
+        "Length of stay >=7 days",
+      "Postnatal stay (3-6 days)" =
+        "Postnatal stay 3-6 days",
+      "Postnatal stay (>=7 days)" =
+        "Postnatal stay >=7 days",
+      "Caeserian section" =
+        "Caesarean section",
+      "Caesarean section (elective)" =
+        "Elective caesarean section",
+      "Caesarean section (emergency)" =
+        "Emergency caesarean section",
+      "Early maternal deaths" =
+        "Maternal death",
+      "Late maternal deaths" =
+        "Late maternal death",
+      "Epidural" =
+        "Epidural anaesthesia (pre-delivery)",
+      "Induction of labour" =
+        "Induction of labour (any)",
+      "Premature rupture of membrane" =
+        "Prelabour rupture of membranes (PROM)",
+      "Severe maternal morbidity" =
+        "Severe maternal morbidity (overall)",
+      "Hospital admission" =
+        "Hospital admission within 3 months postpartum",
+      "LGA" =
+        "Large for gestational age",
+      "SGA" =
+        "Small for gestational age",
+      "Postnatal depression" =
+        "Postpartum depression",
+      "Postnatal anxiety" =
+        "Postpartum anxiety",
+      .default = Outcome
+    ),
+    MM_Definition = factor(
+      trimws(as.character(MM_Definition)),
+      levels = c("1", "2", "3+")
+    )
+  )
+
+
+# 3. Set outcome ordering --------------------------------------------------
+
+outcome_order <- c(
+  # Maternal health
+  "Postpartum haemorrhage",
+  "Maternal infection",
+  "Hysterectomy",
+  "Severe maternal morbidity (overall)",
+  "Maternal death",
+  "Late maternal death",
+
+  # Obstetric and delivery outcomes
+  "Preterm birth",
+  "Prelabour rupture of membranes (PROM)",
+  "Birth without intervention",
+  "Epidural anaesthesia (pre-delivery)",
+  "Spontaneous vaginal birth",
+  "Induction of labour (any)",
+  "Augmentation of labour",
+  "Instrumental birth",
+  "Perineal tear",
+  "Shoulder dystocia",
+  "Caesarean section",
+  "Emergency caesarean section",
+  "Elective caesarean section",
+
+  # Infant and child outcomes
+  "APGAR",
+  "Stillbirth",
+  "Small for gestational age",
+  "Large for gestational age",
+  "Neonatal death",
+  "Infant death",
+
+  # Mental health
+  "Postpartum depression",
+  "Postpartum anxiety",
+
+  # Service use
+  "Hospital admission within 3 months postpartum",
+  "ICU admission within 3 months postpartum",
+  "Length of stay 3-6 days",
+  "Length of stay >=7 days",
+  "Length of stay (continuous)",
+  "Postnatal stay 3-6 days",
+  "Postnatal stay >=7 days",
+  "Actual place of birth (home vs hospital)",
+  "Intended place of birth (home vs hospital)"
+)
+
+unmatched <- setdiff(unique(df$Outcome), outcome_order)
+
+if (length(unmatched) > 0) {
+  stop("Unassigned outcomes: ", paste(unmatched, collapse = ", "))
+}
+
+df <- df %>%
+  mutate(Outcome = factor(Outcome, levels = outcome_order))
+
+
+# 4. Define dynamic limits -------------------------------------------------
+
+dynamic_limits <- function(x) {
+
+  # Include the reference value of 1 in every panel
+  values <- c(x[is.finite(x)], 1)
+
+  lower <- min(values)
+  upper <- max(values)
+
+  # Add 10% padding; minimum padding of 0.02
+  padding <- max((upper - lower) * 0.10, 0.02)
+
+  c(
+    max(0, lower - padding),
+    upper + padding
+  )
+}
+
+
+# 5. Plot all outcomes with independent y-axis limits -----------------------
+
+all_outcomes_plot <- ggplot(
+  df,
+  aes(
+    x = MM_Definition,
+    y = RR,
+    group = MM_Definition,
+    colour = MM_Definition
+  )
+) +
+  geom_point(
+    position = position_dodge(0.9),
+    size = 8
+  ) +
+  geom_hline(
+    yintercept = 1,
+    colour = "red",
+    linetype = 2,
+    linewidth = 3
+  ) +
+  geom_errorbar(
+    aes(ymin = LL, ymax = UL),
+    width = 0.2,
+    linewidth = 3,
+    position = position_dodge(0.9)
+  ) +
+  facet_wrap(
+    ~Outcome,
+    scales = "free_y",
+    ncol = 3,
+    labeller = label_wrap_gen(width = 32)
+  ) +
+  scale_x_discrete(drop = FALSE) +
+  scale_colour_discrete(drop = FALSE) +
+  scale_y_continuous(
+    limits = dynamic_limits,
+    expand = expansion(mult = c(0, 0)),
+    oob = scales::oob_keep
+  ) +
+  labs(
+    x = "Number of conditions",
+    y = "Relative Risk (95% CI)"
+  ) +
+  theme_bw() +
+  theme(
+    text = element_text(
+      size = 35, face = "bold", hjust = 0.5
+    ),
+    strip.text = element_text(
+      size = 25,
+      face = "bold",
+      margin = margin(8, 5, 8, 5)
+    ),
+    axis.title = element_text(
+      size = 35, face = "bold"
+    ),
+    axis.text = element_text(size = 25),
+    axis.text.x = element_text(
+      angle = 90, hjust = 1, vjust = 1, size = 25
+    ),
+    axis.text.y = element_text(size = 25),
+    legend.position = "none",
+    panel.spacing = grid::unit(0.8, "lines"),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+
+print(all_outcomes_plot)
+
+
+# 6. Save as a separate version -------------------------------------------
+
+ggsave(
+  filename = "Figure3_Pooled_All_Outcomes_Dynamic_Axes.jpeg",
+  plot = all_outcomes_plot,
+  width = 30,
+  height = 49,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+```
+
+
+
+
+
+#### Plots by category
+
+###### Obstetric and Delivery 
+
+```{r}
+
+# figure3_data_maternal_Outcomes = subset(figure3_data,figure3_data$Category=="Obstetric / Maternal Outcomes")
+
+figure3_data_maternal_Outcomes = filter(figure3_data,Category %in% c("Obstetric / Delivery Outcomes"))
+
+p1=ggplot(figure3_data_maternal_Outcomes, aes(x=Dataset, y=RR, group=MM_Definition, color=MM_Definition)) +
+  geom_point(position=position_dodge(0.9),size=8)+ylab("Relative Risk (95% CI)")+xlab("Dataset")+
+  geom_abline(intercept = 1, slope = 0, colour = "red", linetype = 2, size=3)+labs(color = "Number of conditions")+
+  geom_errorbar(aes(ymin=LL, ymax=UL), width=0.2,size=3,
+                 position=position_dodge(0.9))+theme_bw()+
+  facet_wrap(~Outcome, scales = "free_y", ncol=3)+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 50),
+        axis.text.y = element_text(size = 50),
+        axis.text=element_text(size=50),legend.justification = c(1, 1))
+
+ggsave(p1,filename = "Figure 3 Obstetric or Delivery Outcomes V2.jpeg",width = 49,height = 40, dpi=300)
+
+
+```
+
+###### Maternal Health Outcomes
+
+```{r}
+figure3_data_maternal_Outcomes = filter(figure3_data,Category %in% c("Maternal Health Outcomes"))
+
+p1=ggplot(figure3_data_maternal_Outcomes, aes(x=Dataset, y=RR, group=MM_Definition, color=MM_Definition)) +
+  geom_point(position=position_dodge(0.9),size=8)+ylab("Relative Risk (95% CI)")+xlab("Dataset")+
+  geom_abline(intercept = 1, slope = 0, colour = "red", linetype = 2, size=3)+labs(color = "Number of conditions")+
+  geom_errorbar(aes(ymin=LL, ymax=UL), width=0.2,size=3,
+                 position=position_dodge(0.9))+theme_bw()+
+  facet_wrap(~Outcome, scales = "free_y", ncol=3)+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 50),
+        axis.text.y = element_text(size = 50),
+        axis.text=element_text(size=50),legend.justification = c(1, 1))
+
+ggsave(p1,filename = "Figure 3 Maternal Health Outcomes V2.jpeg",width = 49,height = 40, dpi=300)
+
+```
+
+
+###### Service Utilisation Outcomes 
+
+```{r}
+
+figure3_data_service_utilization = subset(figure3_data,figure3_data$Category=="Service Utilisation Outcomes")
+
+p1=ggplot(figure3_data_service_utilization, aes(x=Dataset, y=RR, group=MM_Definition, color=MM_Definition)) +
+  geom_point(position=position_dodge(0.9),size=8)+ylab("Relative Risk (95% CI)")+xlab("Dataset")+
+  geom_abline(intercept = 1, slope = 0, colour = "red", linetype = 2, size=3)+labs(color = "Number of conditions")+
+  geom_errorbar(aes(ymin=LL, ymax=UL), width=0.2,size=3,
+                 position=position_dodge(0.9))+theme_bw()+
+  facet_wrap(~Outcome, scales = "free_y", ncol=3)+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 50),
+        axis.text.y = element_text(size = 50),
+        axis.text=element_text(size=50),legend.justification = c(1, 1))
+
+ggsave(p1,filename = "Figure 3 Health Service Utilization V2.jpeg",width = 49,height = 40, dpi=300)
+
+```
+
+
+###### Infant/Child Outcomes 
+
+```{r}
+
+figure3_data_Child_Outcomes = subset(figure3_data,figure3_data$Category=="Infant/Child Outcomes")
+
+p1=ggplot(figure3_data_Child_Outcomes, aes(x=Dataset, y=RR, group=MM_Definition, color=MM_Definition)) +
+  geom_point(position=position_dodge(0.9),size=8)+ylab("Relative Risk (95% CI)")+xlab("Dataset")+
+  geom_abline(intercept = 1, slope = 0, colour = "red", linetype = 2, size=3)+labs(color = "Number of conditions")+
+  geom_errorbar(aes(ymin=LL, ymax=UL), width=0.2,size=3,
+                 position=position_dodge(0.9))+theme_bw()+
+  facet_wrap(~Outcome, scales = "free_y", ncol=3)+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 50),
+        axis.text.y = element_text(size = 50),
+        axis.text=element_text(size=50),legend.justification = c(1, 1))
+
+ggsave(p1,filename = "Figure 3 Infant_Child Outcomes V2.jpeg",width = 49,height = 40, dpi=300)
+
+
+```
+
+
+###### Maternal mental Health 
+
+```{r}
+figure3_data_Mental_Health_Outcomes = subset(figure3_data,figure3_data$Category=="Maternal mental Health")
+
+p1=ggplot(figure3_data_Mental_Health_Outcomes, aes(x=Dataset, y=RR, group=MM_Definition, color=MM_Definition)) +
+  geom_point(position=position_dodge(0.9),size=8)+ylab("Relative Risk (95% CI)")+xlab("Dataset")+
+  geom_abline(intercept = 1, slope = 0, colour = "red", linetype = 2, size=3)+labs(color = "Number of conditions")+
+  geom_errorbar(aes(ymin=LL, ymax=UL), width=0.2,size=3,
+                 position=position_dodge(0.9))+theme_bw()+
+  facet_wrap(~Outcome, scales = "free_y", ncol=3)+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 50),
+        axis.text.y = element_text(size = 50),
+        axis.text=element_text(size=50),legend.justification = c(1, 1))
+
+ggsave(p1,filename = "Figure 3 Maternal mental Health V2.jpeg",width = 49,height = 40, dpi=300)
+
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### Saving pooled data
+
+```{r}
+pooled_data = subset(figure3_data,figure3_data$Dataset=="Pooled")
+
+pooled_data <- pooled_data %>%
+  dplyr::mutate(
+    Estimate_CI = sprintf("%.2f (%.2f, %.2f)", RR, LL, UL)  # Format as text
+  )
+
+pooled_data = pooled_data %>% dplyr::select(Outcome,Model,Estimate_CI)
+
+heterogeneity_o_vs_1 = read_excel("0 vs 1_heterogeneity.xlsx") %>% dplyr::mutate(Model = "0 vs 1")
+heterogeneity_o_vs_2 = read_excel("0 vs 2_heterogeneity.xlsx") %>% dplyr::mutate(Model = "0 vs 2")
+heterogeneity_o_vs_3 = read_excel("0 vs 3+_heterogeneity.xlsx") %>% dplyr::mutate(Model = "0 vs 3")
+
+heterog_data = rbind(heterogeneity_o_vs_1,heterogeneity_o_vs_2,heterogeneity_o_vs_3)
+
+pooled_data = left_join(pooled_data,heterog_data,by=c("Outcome","Model"))
+
+write.csv(pooled_data,"Figure 3 Pooled Estimates.csv",row.names = F)
+
+```
+
+
+```{r}
+
+figure3_data_sub <- figure3_data %>%
+  dplyr::mutate(
+    Estimate_CI = sprintf("%.2f (%.2f, %.2f)", RR, LL, UL)  # Format as text
+  )
+
+figure3_data_sub = figure3_data_sub %>% dplyr::select(Dataset,Outcome,Model,Estimate_CI)
+
+write.csv(figure3_data_sub,"Figure 3 All estimates including Pooled.csv",row.names = F)
+
+
+figure3_data_sub = figure3_data_sub %>% tidyr::spread(Model,Estimate_CI)
+
+write.csv(figure3_data_sub,"Figure 3 All estimates including Pooled V2.csv",row.names = F)
+
+
+```
+
+
+### Figure 3: Another way
+
+
+#### All variables
+
+```{r}
+figure3_data2 = figure3_data
+
+figure3_data2$Dataset = factor(figure3_data2$Dataset,levels = c("Pooled","Scotland routine health records","SAIL","NI","CPRD","Born in Bradford"))
+
+```
+
+
+```{r}
+# Define x-axis limits (e.g., -1.5 to 1.5)
+x_min <- 0
+x_max <- 3.6
+x_max2 <- 5
+
+```
+
+```{r}
+figure3_data2 <- figure3_data2 %>%
+  mutate(
+    lower_trunc = ifelse(LL < x_min, x_min, LL),  # Truncate lower bound
+    upper_trunc = ifelse(UL > x_max, x_max, UL),  # Truncate upper bound
+    lower_arrow = LL < x_min,   # Flag for lower-bound truncation
+    upper_arrow = UL > x_max    # Flag for upper-bound truncation
+  )
+
+# Add a formatted column with Estimate (95% CI)
+figure3_data2 <- figure3_data2 %>%
+  mutate(
+    Estimate_CI = sprintf("%.2f (%.2f, %.2f)", RR, LL, UL)  # Format as text
+  )
+
+```
+
+
+
+```{r}
+
+figure3_data2$UL = ifelse(figure3_data2$UL>4,3.5,figure3_data2$UL)
+figure3_data2$LL = ifelse(figure3_data2$LL>4,3.5,figure3_data2$LL)
+figure3_data2$RR = ifelse(figure3_data2$RR>4,3.5,figure3_data2$RR)
+
+
+p1=ggplot(figure3_data2, aes(y = Dataset, x = RR, group=MM_Definition, color=MM_Definition)) +
+  # Add the "Estimate (95% CI)" column
+  geom_text(aes(x = 4 + 0.5, label = Estimate_CI),  # Adjust position
+            position=position_dodge(0.5), size = 10,color = "black",fontface="bold") +  # Align text left
+  geom_point(size = 8,position=position_dodge(0.5)) +                              # Effect size points
+  geom_errorbarh(aes(xmin = LL, xmax = UL),    # Confidence intervals
+                 height = 0.4,linewidth=3,width=0.2,size=3,
+                 position=position_dodge(0.5)) +
+  
+  # Add arrows for truncated lower CIs
+  geom_segment(data = figure3_data2[figure3_data2$lower_arrow, ], 
+               aes(x = x_min, xend = x_min - 0.1, y = Dataset, yend = Dataset),
+               arrow = arrow(type = "closed", length = unit(1, "cm")),
+               color = "black",size=3) +
+  
+  # Add arrows for truncated upper CIs
+  geom_segment(data = figure3_data2[figure3_data2$upper_arrow, ], 
+               aes(x = x_max, xend = x_max+0.1, y = Dataset, yend = Dataset),
+               arrow = arrow(type = "closed", length = unit(1, "cm")),
+               color = "black",size=3) +
+  
+
+  geom_vline(xintercept = 1, linetype = "dashed",size=3) +  # Reference line at 0
+  #scale_color_manual(values = c("blue", "red")) +    # Color coding
+  theme_bw() +
+  labs(x = "Relative Risk", y = "Variable", color = "Transition") +
+  theme(legend.position = "none") + 
+  coord_cartesian(xlim = c(x_min, x_max2)) + # Set x-axis limits# Remove redundant legend
+  facet_wrap(~Outcome, scales = "free_x") + # Separate plots for each modeltheme_bw()+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 40),
+        axis.text.y = element_text(size = 30),
+        axis.text=element_text(size=50))
+
+ggsave(p1,filename = "Figure 3 ALL_Version2 140725.jpeg",width = 49,height = 49, dpi=300)
+
+ggsave(p1,filename = "Figure 3 V2.jpeg",width = 49,height = 49, dpi=300)
+```
+
+
+
+```{r}
+p1=ggplot(figure3_data2, aes(y = Dataset, x = RR, group=MM_Definition, color=MM_Definition)) +
+  # Add the "Estimate (95% CI)" column
+  geom_text(aes(x = 4 + 0.5, label = Estimate_CI),  # Adjust position
+            position=position_dodge(0.5), size = 10,color = "black",fontface="bold") +  # Align text left
+  geom_point(size = 8,position=position_dodge(0.5)) +                              # Effect size points
+  geom_errorbarh(aes(xmin = LL, xmax = UL),    # Confidence intervals
+                 height = 0.4,linewidth=3,width=0.2,size=3,
+                 position=position_dodge(0.5)) +
+
+  geom_vline(xintercept = 1, linetype = "dashed",size=3) +  # Reference line at 0
+  #scale_color_manual(values = c("blue", "red")) +    # Color coding
+  theme_bw() +
+  labs(x = "Hazard Ratio", y = "Variable", color = "Transition") +
+  theme(legend.position = "none") + 
+  coord_cartesian(xlim = c(x_min, x_max2)) + # Set x-axis limits# Remove redundant legend
+  facet_wrap(~Outcome, scales = "free_x") + # Separate plots for each modeltheme_bw()+
+  theme(text = element_text(size=50,face="bold",hjust = 0.5),
+        axis.title=element_text(size=50,face="bold"),
+        axis.text.x = element_text(angle=90, hjust=1,vjust = 1,size = 40),
+        axis.text.y = element_text(size = 30),
+        axis.text=element_text(size=50),legend.justification = c(1, 1))
+
+ggsave(p1,filename = "Figure 3 ALL Version2 140725.jpeg",width = 49,height = 49, dpi=300)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
