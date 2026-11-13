@@ -9,7 +9,6 @@ output: html_notebook
 
 rm(list = ls())
 
-
 library(meta)
 library(metasens)
 library(readxl)
